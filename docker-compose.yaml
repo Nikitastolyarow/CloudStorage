@@ -1,18 +1,36 @@
-version: '3.8'
+version: '3.9'
 
 services:
-  postgres:
-    image: postgres:15
-    container_name: cloud_postgres
-    restart: always
+  backend:
+    build:
+      dockerfile: Dockerfile_back
+    ports:
+      - "8081:8081"
+    depends_on:
+      - db
     environment:
-      POSTGRES_DB: cloud_storage_db
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 12345
+      - SPRING_DATASOURCE_URL=jdbc:postgresql://localhost:5432/postgres
+      - SPRING_DATASOURCE_USERNAME=postgres
+      - SPRING_DATASOURCE_PASSWORD=12345
+    networks:
+      - app-network
+
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=postgres
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=12345
     ports:
       - "5432:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    networks:
+      - app-network
+
+networks:
+  app-network:
+    driver: bridge
 
 volumes:
   pgdata:

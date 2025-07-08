@@ -1,18 +1,20 @@
 package ru.netology.cloudstorage.dto;
 
-import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.NotBlank;
-import lombok.AllArgsConstructor;
-import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.Getter;
+import lombok.Setter;
 
-
-@Data
+@Setter
+@Getter
 public class LoginRequest {
 
-    @JsonProperty("login")
+    @NotBlank
     private String login;
 
+    @NotBlank
     private String password;
-}
 
+    public LoginRequest() {
+    }
+
+}

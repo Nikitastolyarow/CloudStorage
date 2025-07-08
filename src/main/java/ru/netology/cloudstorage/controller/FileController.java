@@ -1,142 +1,126 @@
 package ru.netology.cloudstorage.controller;
 
-import jakarta.validation.constraints.Min;
-import jakarta.validation.constraints.NotBlank;
-import lombok.RequiredArgsConstructor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.core.io.ByteArrayResource;
-import org.springframework.core.io.Resource;
-import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
+import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 import ru.netology.cloudstorage.dto.ErrorResponse;
-import ru.netology.cloudstorage.dto.FileRenameRequest;
 import ru.netology.cloudstorage.dto.FileResponse;
-import ru.netology.cloudstorage.model.File;
-import ru.netology.cloudstorage.model.User;
+import ru.netology.cloudstorage.entity.User;
 import ru.netology.cloudstorage.service.FileService;
-import ru.netology.cloudstorage.service.UserService;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
-import java.security.Principal;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 
+
 @RestController
-@RequiredArgsConstructor
+@RequestMapping("/cloud")
 public class FileController {
 
+    private final FileService fileService;
     private static final Logger logger = LoggerFactory.getLogger(FileController.class);
 
-    private final FileService fileService;
-    private final UserService userService;
+    public FileController(FileService fileService) {
+        this.fileService = fileService;
+    }
 
-    @PostMapping("/file")
-    public ResponseEntity<?> uploadFile(@RequestParam("filename") @NotBlank String filename,
-                                        @RequestParam("file") MultipartFile file,
-                                        Principal principal) throws IOException {
-        if (principal == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(new ErrorResponse("Unauthorized", 2));
-        }
-        if (file.isEmpty()) {
-            return ResponseEntity.badRequest().body(new ErrorResponse("File is empty", 1));
-        }
+
+    @GetMapping("/list")
+    public ResponseEntity<?> listFiles(
+            @RequestHeader("auth-token") String authToken,
+            @RequestParam(value = "limit", defaultValue = "3") int limit
+    ) {
         try {
-            User user = userService.findUserByLogin(principal.getName())
-                    .orElseThrow(() -> new RuntimeException("User not found"));
-            fileService.uploadFile(filename, file.getBytes(), user);
-            return ResponseEntity.ok().build();
-        } catch (RuntimeException e) {
-            logger.error("Upload failed: {}", e.getMessage());
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(new ErrorResponse("Unauthorized", 2));
+            User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+            List<FileResponse> files = fileService.listFiles(user.getId(), limit);
+            return ResponseEntity.ok(files);
+        }catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage(), 400));
         }
     }
 
-    @DeleteMapping("/file")
-    public ResponseEntity<?> deleteFile(@RequestParam("filename") @NotBlank String filename,
-                                        Principal principal) {
-        if (principal == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(new ErrorResponse("Unauthorized", 2));
-        }
-        try {
-            User user = userService.findUserByLogin(principal.getName())
-                    .orElseThrow(() -> new RuntimeException("User not found"));
-            fileService.deleteFile(filename, user);
+    @PostMapping("/file")
+    public ResponseEntity<?> uploadFile(
+            @RequestHeader("auth-token") String authToken,
+            @RequestParam("filename") String filename,
+            @RequestPart MultipartFile file
+    ){
+        try{
+            User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+            fileService.uploadFile(user.getId(),filename,file);
             return ResponseEntity.ok().build();
-        } catch (RuntimeException e) {
-            logger.error("Delete failed: {}", e.getMessage());
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(new ErrorResponse("Unauthorized", 2));
+        } catch(IllegalArgumentException e){
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage(), 400));
         }
+    }
+
+
+    @DeleteMapping("/file")
+    public ResponseEntity<?> deleteFile(
+    @RequestHeader("auth-token") String authToken,
+    @RequestParam("filename") String filename
+        ) {
+            try{
+                User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+                fileService.deleteFile(user.getId(),filename);
+                return ResponseEntity.ok().build();
+            } catch(IllegalArgumentException e){
+                return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage(), 400));
+            } catch (IOException e) {
+        return ResponseEntity.status(500).body(new ErrorResponse("Ошибка удаления файла", 500));
+    }
     }
 
     @GetMapping("/file")
-    public ResponseEntity<?> downloadFile(@RequestParam("filename") @NotBlank String filename,
-                                          Principal principal) {
-        if (principal == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(new ErrorResponse("Unauthorized", 2));
-        }
+    public Object downloadFile(
+            @RequestHeader("auth-token") String authToken,
+            @RequestParam("filename") String filename
+    ) {
         try {
-            User user = userService.findUserByLogin(principal.getName())
-                    .orElseThrow(() -> new RuntimeException("User not found"));
-            File file = fileService.downloadFile(filename, user);
+            User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+            InputStreamResource resource = fileService.downloadFile(user.getId(), filename);
+            String filePath = fileService.getFilePath(user.getId(), filename);
+            Path path = Paths.get(filePath);
+            String mimeType = Files.probeContentType(path);
             return ResponseEntity.ok()
-                    .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=" + file.getFilename())
-                    .contentType(MediaType.APPLICATION_OCTET_STREAM)
-                    .body(new ByteArrayResource(file.getContent()));
-        } catch (RuntimeException e) {
-            logger.error("Download failed: {}", e.getMessage());
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(new ErrorResponse("Unauthorized", 2));
+                    .header("Content-Disposition", "attachment; filename*=UTF-8''" + URLEncoder.encode(filename, StandardCharsets.UTF_8))
+                    .contentType(MediaType.parseMediaType(mimeType != null ? mimeType : "application/octet-stream"))
+                    .contentLength(Files.size(path))
+                    .body(resource);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage(), 400));
+        } catch (IOException e) {
+            return ResponseEntity.status(500).body(new ErrorResponse("Ошибка скачивания файла", 500));
         }
     }
-
     @PutMapping("/file")
-    public ResponseEntity<?> renameFile(@RequestParam("filename") @NotBlank String filename,
-                                        @RequestBody FileRenameRequest request,
-                                        Principal principal) {
-        if (principal == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(new ErrorResponse("Unauthorized", 2));
-        }
+    public ResponseEntity<?> renameFile(
+            @RequestHeader("auth-token") String authToken,
+            @RequestParam("filename") String filename
+    ) {
         try {
-            User user = userService.findUserByLogin(principal.getName())
-                    .orElseThrow(() -> new RuntimeException("User not found"));
-            fileService.renameFile(filename, request.getName(), user);
+            String newFilename = "newFile.txt";
+            User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+            logger.info("Переименование файла {} в {} для пользователя {}", filename, newFilename, user.getId());
+            fileService.renameFile(user.getId(), filename, newFilename);
             return ResponseEntity.ok().build();
-        } catch (RuntimeException e) {
-            logger.error("Rename failed: {}", e.getMessage());
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(new ErrorResponse("Unauthorized", 2));
+        } catch (IllegalArgumentException e) {
+            logger.error("Неверный запрос: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(new ErrorResponse(e.getMessage(), 400));
+        } catch (IOException e) {
+            logger.error("Ошибка при переименовании файла: {}", e.getMessage());
+            return ResponseEntity.status(500).body(new ErrorResponse("Ошибка переименования файла", 500));
         }
     }
 
-    @GetMapping({"/list", "/cloud/list"}) // Поддержка обоих маршрутов
-    public ResponseEntity<?> listFiles(@RequestParam("limit") @Min(1) int limit,
-                                       Principal principal) {
-        logger.debug("listFiles request: principal={}, limit={}", principal, limit);
-        if (principal == null) {
-            logger.warn("Unauthorized request to /list");
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(new ErrorResponse("Unauthorized", 2));
-        }
-        try {
-            User user = userService.findUserByLogin(principal.getName())
-                    .orElseThrow(() -> new RuntimeException("User not found"));
-            List<FileResponse> files = fileService.listFiles(user, limit);
-            logger.info("Returning {} files for user {}", files.size(), principal.getName());
-            return ResponseEntity.ok(files);
-        } catch (RuntimeException e) {
-            logger.error("Error in listFiles: {}", e.getMessage());
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
-                    .body(new ErrorResponse("Unauthorized", 2));
-        }
-    }
 }

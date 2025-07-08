@@ -1,14 +1,12 @@
 package ru.netology.cloudstorage.dto;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
-import lombok.AllArgsConstructor;
 import lombok.Data;
-import lombok.NoArgsConstructor;
+import lombok.RequiredArgsConstructor;
 
 @Data
-@AllArgsConstructor
-@NoArgsConstructor
+@RequiredArgsConstructor
 public class LoginResponse {
     @JsonProperty("auth-token")
-    private String authToken;
+    private final String authToken;
 }
